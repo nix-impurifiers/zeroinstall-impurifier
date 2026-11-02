@@ -51,7 +51,8 @@ let
   };
   fixture = import (coreSrc + "/tests/hardware-fixture.nix") { inherit pkgs; };
   hardware = impurifier.makeOfflineFeed {
-    pkg = fixture.tool;
+    pkg = fixture.tool // { pname = "hardware_tool"; };
+    program = "hardware-tool";
     inherit (fixture) hardware;
   };
 in
@@ -96,6 +97,7 @@ in
       machine.succeed("zeroinstall-impurifier prepare " + implementation)
       machine.succeed("su - consumer -c '0install --offline --console run --version=1 /home/consumer/application/feed.xml' | grep '^impurified$'")
       machine.succeed("su - consumer -c '0store verify $(cat /home/consumer/application/digest)'")
+      assert machine.succeed("su - consumer -c '0install --offline --console run --version=1 /home/consumer/application/feed.xml'").strip() == "impurified"
       machine.succeed("su - consumer -c '0install --offline --console run /home/consumer/net/feed.xml' | grep '^impurified$'")
       machine.succeed("su - consumer -c '0install --offline --console add impurified /home/consumer/application/feed.xml; 0install --offline --console run impurified' | grep '^impurified$'")
       machine.succeed("su - consumer -c '0store add $(cat /home/consumer/application2/digest) /home/consumer/application2/implementation.tar.gz'")

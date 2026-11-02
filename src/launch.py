@@ -26,7 +26,7 @@ def main():
         if spec['offline'] and not Path(spec['installable']).exists():
             command += ['--option', 'substituters', (implementation / 'cache').as_uri(), '--option', 'require-sigs', 'false', '--option', 'builders', '']
         try:
-            subprocess.run(command, check=True)
+            subprocess.run(command, check=True, stdout=subprocess.DEVNULL)
         except subprocess.CalledProcessError:
             if spec['offline'] and os.geteuid() != 0:
                 print('Offline import may need root preparation: sudo zeroinstall-impurifier prepare ' + shlex.quote(str(implementation)), file=sys.stderr)
@@ -36,7 +36,7 @@ def main():
         original_mode = implementation.stat().st_mode & 0o777
         implementation.chmod(original_mode | 0o200)
         try:
-            subprocess.run(['nix-store', '--realise', spec['installable'], '--add-root', str(implementation / 'nix-root'), '--indirect'], check=True)
+            subprocess.run(['nix-store', '--realise', spec['installable'], '--add-root', str(implementation / 'nix-root'), '--indirect'], check=True, stdout=subprocess.DEVNULL)
         finally:
             implementation.chmod(original_mode)
     executable = spec['installable'] + '/bin/' + spec['program']
@@ -45,13 +45,14 @@ def main():
         module_spec = importlib.util.spec_from_file_location('impurifier_engine', implementation / 'engine.py')
         engine = importlib.util.module_from_spec(module_spec)
         module_spec.loader.exec_module(engine)
-        manifest = engine.validate({'name': spec['name'], 'version': spec['version'], 'priority': 5, 'installable': spec['installable'], 'hardware': spec['hardware']}, 'zeroinstall-impurifier')
+        manifest_name = 'app-' + hashlib.sha256(spec['name'].encode()).hexdigest()[:24]
+        manifest = engine.validate({'name': manifest_name, 'version': spec['version'], 'priority': 5, 'installable': spec['installable'], 'hardware': spec['hardware']}, 'zeroinstall-impurifier')
         # Capture and root a fresh immutable snapshot before starting the app.
         with (state / 'lock').open('w') as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
-            snapshot = engine.hardware_snapshots([manifest], state)[spec['name']]
+            snapshot = engine.hardware_snapshots([manifest], state)[manifest_name]
             key = hashlib.sha256(snapshot.encode()).hexdigest()
-            subprocess.run(['nix-store', '--realise', snapshot, '--add-root', str(state / ('library-' + key)), '--indirect'], check=True)
+            subprocess.run(['nix-store', '--realise', snapshot, '--add-root', str(state / ('library-' + key)), '--indirect'], check=True, stdout=subprocess.DEVNULL)
             environment['LD_LIBRARY_PATH'] = snapshot + (':' + environment['LD_LIBRARY_PATH'] if environment.get('LD_LIBRARY_PATH') else '')
             preload = [str(Path(snapshot) / name) for name in spec['hardware']['preload']]
             if preload:
