@@ -61,3 +61,23 @@ are outside this per-user application's activation contract. The VM tests use
 the real headless Zero Install 2.18 client, real Nix daemon, provider feeds,
 native update/version selection, host-library capture, cache verification and GC.
 Original code is MIT licensed; see [THIRD_PARTY.md](THIRD_PARTY.md).
+
+## Native implementations and bundled clients
+
+`makeNativeFeed { name; version; payload; command; dependencies?; architecture?; ... }`
+emits a native feed and implementation archive without Nix launchers, provider
+requirements or helper scripts. The producer supplies a runnable implementation
+tree; this does not relocate binaries. The architecture string defaults to
+`Linux-x86_64` and can describe another producer target. Native Zero Install owns
+its content-addressed cache. The VM selects and verifies two native versions,
+executes their static binaries in a root without `/nix`, and checks independent
+cache eviction.
+
+Nix-backed `makeFeed` accepts `bundledNixStore` and `bundledNixNotices` for a static
+ELF client with upstream notices. Leave `nixProvider` unset when a native provider
+feed is unnecessary. Compatible external clients take precedence; explicit
+`IMPURIFIER_NIX_STORE` disables fallback and failed mutations are never retried
+through another client. Python remains required. A separate bundled-client VM
+repeats the original feed lifecycle suite without external Nix on the user's PATH.
+Trusted root preparation never executes a client from a user-owned cache. The
+Nix provider/installer remains deferred.

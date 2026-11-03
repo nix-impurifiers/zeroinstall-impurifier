@@ -42,12 +42,17 @@ let
       dependencies ? [ ],
       archiveURL ? null,
       description ? "Nix projected application",
+      architecture ? "Linux-x86_64",
+      includeHelpers ? true,
     }:
     assert lib.assertMsg (
       builtins.match "[A-Za-z0-9_./+-]+" command != null
       && !(lib.hasPrefix "/" command)
       && !(lib.elem ".." (lib.splitString "/" command))
     ) "feed command must remain inside the implementation";
+    assert lib.assertMsg (
+      builtins.match "[A-Za-z0-9_*]+-[A-Za-z0-9_*]+" architecture != null
+    ) "invalid Zero Install architecture";
     pkgs.runCommand "${name}-${version}-zeroinstall"
       {
         nativeBuildInputs = [
@@ -67,8 +72,10 @@ let
         find root -exec touch -h -d @1 {} +
         0install digest --algorithm=sha256new root > "$out/digest"
         tar --sort=name --mtime=@1 --owner=0 --group=0 --numeric-owner -C root -cf - . | gzip -n > "$out/implementation.tar.gz"
-        cp ${../src/prepare.py} "$out/prepare.py"
-        cp ${../src/prune.py} "$out/prune.py"
+        ${lib.optionalString includeHelpers ''
+          cp ${../src/prepare.py} "$out/prepare.py"
+          cp ${../src/prune.py} "$out/prune.py"
+        ''}
         python3 ${../src/feed.py} "$out" ${
           pkgs.writeText "feed.json" (
             builtins.toJSON {
@@ -79,6 +86,7 @@ let
                 description
                 dependencies
                 archiveURL
+                architecture
                 ;
             }
           )
@@ -90,6 +98,8 @@ let
       program ? pkg.meta.mainProgram or pkg.pname,
       offline ? false,
       hardware ? null,
+      bundledNixStore ? null,
+      bundledNixNotices ? [ ],
       nixProvider ? null,
       pythonProvider ? null,
       archiveURL ? null,
@@ -120,6 +130,15 @@ let
         };
       payload = pkgs.runCommand "zeroinstall-nix-implementation" { } ''
         mkdir -p $out
+        ${lib.optionalString (bundledNixStore != null) ''
+          cp ${
+            core.makeRuntimeTree { inherit bundledNixStore bundledNixNotices; }
+          }/usr/lib/zeroinstall-impurifier/nix-store $out/nix-store
+          mkdir -p $out/share/licenses/bundled-nix
+          cp -r ${
+            core.makeRuntimeTree { inherit bundledNixStore bundledNixNotices; }
+          }/usr/share/licenses/zeroinstall-impurifier/bundled-nix/. $out/share/licenses/bundled-nix/
+        ''}
         install -m755 ${../src/launch.py} $out/launch.py
         cp ${coreSrc}/src/engine.py $out/engine.py
         cp ${../LICENSE} $out/LICENSE
@@ -160,6 +179,7 @@ in
       ''
         python3 ${../src/repository.py} "$out" ${lib.escapeShellArg archiveBaseURL} ${lib.escapeShellArgs (map toString feeds)}
       '';
+  makeNativeFeed = args: buildFeed (args // { includeHelpers = false; });
   makeNetFeed = args: makeFeed (args // { offline = false; });
   makeOfflineFeed = args: makeFeed (args // { offline = true; });
   makePackage = args: {

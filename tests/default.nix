@@ -4,6 +4,7 @@
   impurifier,
   tools,
   coreSrc,
+  bundled ? false,
 }:
 let
   feed = impurifier.buildFeed {
@@ -51,12 +52,15 @@ let
   };
   fixture = import (coreSrc + "/tests/hardware-fixture.nix") { inherit pkgs; };
   hardware = impurifier.makeOfflineFeed {
-    pkg = fixture.tool // { pname = "hardware_tool"; };
+    pkg = fixture.tool // {
+      pname = "hardware_tool";
+    };
     program = "hardware-tool";
     inherit (fixture) hardware;
   };
 in
 {
+  native-payload-vm = import ./native-payload-vm.nix { inherit pkgs impurifier; };
   native-feed = feed;
   native-vm = pkgs.testers.runNixOSTest {
     name = "zeroinstall-native-contract";
@@ -75,6 +79,26 @@ in
       ];
       nix.settings.substituters = lib.mkForce [ ];
       systemd.tmpfiles.rules = [ "L+ /usr/bin/env - - - - ${pkgs.coreutils}/bin/env" ];
+      system.activationScripts.bundledClientPath = {
+        deps = [ "users" ];
+        text = pkgs.lib.optionalString bundled ''
+          mkdir -p /home/consumer
+          cat > /home/consumer/.bash_profile <<'PROFILE'
+          export PATH=${
+            pkgs.buildEnv {
+              name = "zeroinstall-no-external-nix";
+              paths = [
+                tools.package
+                pkgs.python3
+                pkgs.coreutils
+                impurifier.package
+              ];
+            }
+          }/bin
+          PROFILE
+          chown consumer:users /home/consumer/.bash_profile
+        '';
+      };
       users.users.consumer = {
         isNormalUser = true;
       };
@@ -82,6 +106,7 @@ in
     testScript = ''
       start_all()
       machine.wait_for_unit("multi-user.target")
+      ${pkgs.lib.optionalString bundled ''machine.fail("su - consumer -c 'command -v nix-store'")''}
       machine.succeed("printf '%s' '<interface xmlns=\"http://zero-install.sourceforge.net/2004/injector/interface\"><name>Nix provider</name><summary>Preinstalled native Nix fixture</summary><implementation id=\"host-nix\" local-path=\"/\" version=\"2.34\"><command name=\"run\" path=\"run/current-system/sw/bin/nix-store\"/></implementation></interface>' > /home/consumer/nix-provider.xml")
       machine.succeed("printf '%s' '<interface xmlns=\"http://zero-install.sourceforge.net/2004/injector/interface\"><name>Python provider</name><summary>Preinstalled native Python fixture</summary><implementation id=\"host-python\" local-path=\"/\" version=\"3.14\"><command name=\"run\" path=\"run/current-system/sw/bin/python3\"/></implementation></interface>' > /home/consumer/python-provider.xml")
       machine.succeed("cp -r ${feed} /home/consumer/native; cp -r ${application} /home/consumer/application; cp -r ${netApplication} /home/consumer/net; cp -r ${application2} /home/consumer/application2; cp -r ${repository} /home/consumer/repository; cp -r ${hardware} /home/consumer/hardware; chown -R consumer:users /home/consumer/native /home/consumer/application /home/consumer/net /home/consumer/application2 /home/consumer/repository /home/consumer/hardware")

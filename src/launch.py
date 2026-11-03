@@ -11,10 +11,20 @@ import subprocess
 import shlex
 import sys
 
+sys.dont_write_bytecode = True
+
 
 def main():
     implementation = Path(__file__).resolve().parent
     spec = json.loads((implementation / 'application.json').read_text())
+    module_spec = importlib.util.spec_from_file_location('impurifier_engine', implementation / 'engine.py')
+    engine = importlib.util.module_from_spec(module_spec)
+    module_spec.loader.exec_module(engine)
+    bundled = implementation / 'nix-store'
+    if bundled.is_file():
+        os.environ.setdefault('IMPURIFIER_BUNDLED_NIX_STORE', str(bundled))
+    client = engine.select_nix_store()
+    os.environ['IMPURIFIER_NIX_STORE'] = client
     state = Path(os.environ.get('XDG_STATE_HOME', str(Path.home() / '.local/state'))) / 'zeroinstall-impurifier' / implementation.name
     state.mkdir(parents=True, exist_ok=True)
     with (state / 'lock').open('w') as lock:
@@ -22,7 +32,7 @@ def main():
         location = state / 'implementation'
         if not location.is_symlink():
             location.symlink_to(implementation)
-        command = ['nix-store', '--realise', spec['installable']]
+        command = [client, '--realise', spec['installable']]
         if spec['offline'] and not Path(spec['installable']).exists():
             command += ['--option', 'substituters', (implementation / 'cache').as_uri(), '--option', 'require-sigs', 'false', '--option', 'builders', '']
         try:
@@ -36,15 +46,12 @@ def main():
         original_mode = implementation.stat().st_mode & 0o777
         implementation.chmod(original_mode | 0o200)
         try:
-            subprocess.run(['nix-store', '--realise', spec['installable'], '--add-root', str(implementation / 'nix-root'), '--indirect'], check=True, stdout=subprocess.DEVNULL)
+            subprocess.run([client, '--realise', spec['installable'], '--add-root', str(implementation / 'nix-root'), '--indirect'], check=True, stdout=subprocess.DEVNULL)
         finally:
             implementation.chmod(original_mode)
     executable = spec['installable'] + '/bin/' + spec['program']
     environment = os.environ.copy()
     if spec.get('hardware'):
-        module_spec = importlib.util.spec_from_file_location('impurifier_engine', implementation / 'engine.py')
-        engine = importlib.util.module_from_spec(module_spec)
-        module_spec.loader.exec_module(engine)
         manifest_name = 'app-' + hashlib.sha256(spec['name'].encode()).hexdigest()[:24]
         manifest = engine.validate({'name': manifest_name, 'version': spec['version'], 'priority': 5, 'installable': spec['installable'], 'hardware': spec['hardware']}, 'zeroinstall-impurifier')
         # Capture and root a fresh immutable snapshot before starting the app.
@@ -52,7 +59,7 @@ def main():
             fcntl.flock(lock, fcntl.LOCK_EX)
             snapshot = engine.hardware_snapshots([manifest], state)[manifest_name]
             key = hashlib.sha256(snapshot.encode()).hexdigest()
-            subprocess.run(['nix-store', '--realise', snapshot, '--add-root', str(state / ('library-' + key)), '--indirect'], check=True, stdout=subprocess.DEVNULL)
+            subprocess.run([client, '--realise', snapshot, '--add-root', str(state / ('library-' + key)), '--indirect'], check=True, stdout=subprocess.DEVNULL)
             environment['LD_LIBRARY_PATH'] = snapshot + (':' + environment['LD_LIBRARY_PATH'] if environment.get('LD_LIBRARY_PATH') else '')
             preload = [str(Path(snapshot) / name) for name in spec['hardware']['preload']]
             if preload:

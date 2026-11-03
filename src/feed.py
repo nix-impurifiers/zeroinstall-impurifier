@@ -16,7 +16,7 @@ SubElement(feed, tag('name')).text = spec['name']
 SubElement(feed, tag('summary')).text = spec['description']
 implementation = SubElement(feed, tag('implementation'), {
     'id': root.joinpath('digest').read_text().strip(),
-    'version': spec['version'], 'arch': 'Linux-x86_64',
+    'version': spec['version'], 'arch': spec['architecture'],
     'released': '2026-11-02', 'stability': 'stable',
 })
 algorithm, digest = root.joinpath('digest').read_text().strip().split('_', 1)
